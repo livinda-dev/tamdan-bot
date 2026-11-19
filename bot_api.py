@@ -362,10 +362,122 @@ def telegram_webhook(update: dict):
         )
         return {"status": "start_no_param"}
 
+    # -------- Handle /help --------
+    if cmd_lower in ["/help", "help", "/start help"]:
+        requests.post(
+            f"{TELEGRAM_API_URL}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": (
+                    "🤖 <b>TAMDAN News Bot Commands</b>\n\n"
+                    "• <b>/topics</b> — View your active news topics\n"
+                    "• <b>/help</b> — Show this help message\n"
+                    "• <b>/start</b> — Check account connection status\n\n"
+                    "📰 <b>About TAMDAN:</b>\n"
+                    "We curate AI-summarized news digests every day at 7:00 AM based on your selected interests.\n\n"
+                    f"🌐 Manage your topics & profile: <a href=\"{SITE_URL}\">{SITE_URL}</a>"
+                ),
+                "parse_mode": "HTML",
+            },
+            timeout=10,
+        )
+        return {"status": "help_sent"}
+
+    # -------- Handle /topics --------
+    if cmd_lower in ["/topics", "/mytopics", "topics"]:
+        try:
+            # 1. Lookup user by chat_id
+            user = (
+                supabase.table("users")
+                .select("id, phone_number")
+                .eq("chat_id", str(chat_id))
+                .maybe_single()
+                .execute()
+            )
+
+            if not user or not user.data:
+                requests.post(
+                    f"{TELEGRAM_API_URL}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": (
+                            "❌ <b>Not Connected</b>\n\n"
+                            "Your Telegram account is not linked to TAMDAN yet.\n\n"
+                            f"Please sign in and connect at: <a href=\"{SITE_URL}\">{SITE_URL}</a>"
+                        ),
+                        "parse_mode": "HTML",
+                    },
+                    timeout=10,
+                )
+                return {"status": "not_linked"}
+
+            user_id = user.data["id"]
+
+            # 2. Lookup topics for this user
+            topics_result = (
+                supabase.table("topics")
+                .select("topic")
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
+            )
+
+            raw_topics = topics_result.data.get("topic") if topics_result and topics_result.data else ""
+            cleaned_topics = [
+                re.sub(r"^[•\-]\s*", "", line).strip()
+                for line in (raw_topics or "").split("\n")
+                if line.strip()
+            ]
+
+            if cleaned_topics:
+                topic_bullets = "\n".join([f"• <b>{t}</b>" for t in cleaned_topics])
+                message_text = (
+                    "📌 <b>Your Subscribed Topics:</b>\n\n"
+                    f"{topic_bullets}\n\n"
+                    "⏰ <i>Daily personalized news digests are delivered every morning at 7:00 AM.</i>\n\n"
+                    f"👉 <a href=\"{SITE_URL}/interest\">Click here to edit your topics</a>"
+                )
+            else:
+                message_text = (
+                    "📌 <b>No Topics Found</b>\n\n"
+                    "You haven't added any topics yet!\n\n"
+                    f"👉 <a href=\"{SITE_URL}/interest\">Click here to choose your news topics</a>"
+                )
+
+            requests.post(
+                f"{TELEGRAM_API_URL}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": message_text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=10,
+            )
+            return {"status": "topics_sent"}
+
+        except Exception as e:
+            print(f"Error fetching topics for chat_id {chat_id}: {e}")
+            requests.post(
+                f"{TELEGRAM_API_URL}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": "⚠️ Failed to fetch your topics. Please try again later.",
+                },
+                timeout=10,
+            )
+            return {"status": "error"}
+
     # -------- Default echo --------
     requests.post(
         f"{TELEGRAM_API_URL}/sendMessage",
-        json={"chat_id": chat_id, "text": f"You said: {raw_text}"},
+        json={
+            "chat_id": chat_id,
+            "text": (
+                f"You said: {raw_text}\n\n"
+                "Type /help to see available commands or /topics to view your news interests."
+            ),
+        },
         timeout=10,
     )
 
